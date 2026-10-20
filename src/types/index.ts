@@ -31,3 +31,48 @@ export interface AuthUser {
   role: Role | null;
   orgId: string | null;
 }
+
+export type ContentType = "caption" | "product_description" | "hashtags" | "campaign_ideas";
+export type Platform = "instagram" | "twitter" | "linkedin" | "facebook" | "general";
+export type Tone = "professional" | "casual" | "excited" | "witty" | "urgent" | "informative";
+export type DraftStatus = "draft" | "reviewed" | "scheduled" | "archived";
+
+export interface MediaReference {
+  url: string;
+  type: "image" | "video";
+  altText?: string;
+}
+
+export interface PromptSettings {
+  topic: string;
+  platform: Platform;
+  tone: Tone;
+  contentType: ContentType;
+  language?: string;
+  targetAudience?: string;
+}
+
+export interface GenerateResult {
+  content: string;
+  hashtags: string[];
+  promptSettings: PromptSettings;
+  provider: "gemini" | "mock";
+  generatedAt: number;
+}
+
+export interface AiContentDraftDoc {
+  id?: string;
+  orgId: string;
+  createdBy: string;
+  title: string;
+  promptSettings: PromptSettings;
+  generatedContent: string;
+  hashtags: string[];
+  status: DraftStatus;
+  media: MediaReference[];
+  providerUsed: "gemini" | "mock";
+  version: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
