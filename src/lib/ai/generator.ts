@@ -116,9 +116,8 @@ function generateMockContent(settings: PromptSettings): { content: string; hasht
 }
 
 const GEMINI_MODELS = [
-  "gemini-3.6-flash",
   "gemini-3.5-flash-lite",
-  "gemini-flash-latest",
+  "gemini-3.6-flash",
   "gemini-3.8-flash",
 ];
 
@@ -160,7 +159,7 @@ Do not wrap your output in markdown code blocks. Return only raw JSON.
             responseMimeType: "application/json",
           },
         }),
-        signal: AbortSignal.timeout(8000),
+        signal: AbortSignal.timeout(25000),
       });
 
       if (!response.ok) {

@@ -120,7 +120,9 @@ export const POST = apiHandler({ roles: ["admin", "user"] }, async ({ request, a
     platform,
     tone,
     language: typeof promptRecord.language === "string" ? promptRecord.language.trim() : "en",
-    targetAudience: typeof promptRecord.targetAudience === "string" ? promptRecord.targetAudience.trim() : undefined,
+    ...(typeof promptRecord.targetAudience === "string" && promptRecord.targetAudience.trim()
+      ? { targetAudience: promptRecord.targetAudience.trim() }
+      : {}),
   };
 
   const generatedContent = requireString(body, "generatedContent", { min: 1, max: 10000 });
