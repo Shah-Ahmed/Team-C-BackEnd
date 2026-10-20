@@ -64,8 +64,9 @@ export async function createDraft(
     updatedAt: now,
   };
 
-  const docRef = await db.collection(COLLECTION_NAME).add(draftData);
-  return { id: docRef.id, ...draftData };
+  const cleanedData: Omit<AiContentDraftDoc, "id"> = JSON.parse(JSON.stringify(draftData));
+  const docRef = await db.collection(COLLECTION_NAME).add(cleanedData);
+  return { id: docRef.id, ...cleanedData };
 }
 
 /**
