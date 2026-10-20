@@ -44,3 +44,34 @@ export function requirePassword(body: Body, field: string): string {
   if (value.length > 128) throw new HttpError(400, `${field} must be at most 128 characters`);
   return value;
 }
+
+export function requireEnum<T extends string>(
+  body: Body,
+  field: string,
+  allowed: readonly T[],
+  defaultValue?: T
+): T {
+  const raw = body[field];
+  if (raw === undefined || raw === null || raw === "") {
+    if (defaultValue !== undefined) return defaultValue;
+    throw new HttpError(400, `${field} is required`);
+  }
+  if (typeof raw !== "string" || !allowed.includes(raw as T)) {
+    throw new HttpError(400, `${field} must be one of: ${allowed.join(", ")}`);
+  }
+  return raw as T;
+}
+
+export function optionalString(
+  body: Body,
+  field: string,
+  { max = 500 }: { max?: number } = {}
+): string | undefined {
+  const raw = body[field];
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "string") throw new HttpError(400, `${field} must be a string`);
+  const trimmed = raw.trim();
+  if (trimmed.length > max) throw new HttpError(400, `${field} must be at most ${max} characters`);
+  return trimmed || undefined;
+}
+
