@@ -24,15 +24,24 @@ Content-Type: application/json
 
 ## Endpoints Summary
 
-| Method | Endpoint | Description |
-| :--- | :--- | :--- |
-| `POST` | `/api/ai/generate` | Generate AI post captions, descriptions, hashtags, or campaign ideas. |
-| `GET` | `/api/ai/drafts` | List all drafts belonging to the authenticated organization. |
-| `POST` | `/api/ai/drafts` | Save a new draft to the library. |
-| `GET` | `/api/ai/drafts/:id` | Retrieve a single draft by ID. |
-| `PUT` | `/api/ai/drafts/:id` | Update an existing draft. |
-| `DELETE` | `/api/ai/drafts/:id` | Delete a draft. |
-| `POST` | `/api/ai/drafts/:id/regenerate` | Regenerate content for an existing draft and increment its version. |
+| Method | Endpoint | Task | Description |
+| :--- | :--- | :--- | :--- |
+| `POST` | `/api/ai/generate` | C1 | Generate AI post captions, descriptions, hashtags, or campaign ideas. |
+| `GET` | `/api/ai/drafts` | C2 | List all drafts belonging to the authenticated organization. |
+| `POST` | `/api/ai/drafts` | C2 | Save a new draft to the library. |
+| `GET` | `/api/ai/drafts/:id` | C2 | Retrieve a single draft by ID. |
+| `PUT` | `/api/ai/drafts/:id` | C2 | Update an existing draft. |
+| `DELETE` | `/api/ai/drafts/:id` | C2 | Delete a draft. |
+| `POST` | `/api/ai/drafts/:id/regenerate` | C2 | Regenerate content for an existing draft and increment its version. |
+| `GET` | `/api/ai/schedule` | C3 | List scheduled posts for the authenticated organization. |
+| `POST` | `/api/ai/schedule` | C3 | Create a scheduled post (standalone or linked to a draft). |
+| `GET` | `/api/ai/schedule/:id` | C3 | Retrieve a single scheduled post. |
+| `PUT` | `/api/ai/schedule/:id` | C3 | Update scheduled post time, timezone, content, or status. |
+| `DELETE` | `/api/ai/schedule/:id` | C3 | Cancel and delete a scheduled post. |
+| `POST` | `/api/ai/schedule/:id/publish` | C3 | Trigger simulated or real publishing workflow. |
+| `GET` | `/api/ai/sentiment` | C4 | List sentiment analysis records for the authenticated organization. |
+| `POST` | `/api/ai/sentiment` | C4 | Analyze review or comment text sentiment and save result. |
+| `GET` | `/api/ai/sentiment/summary` | C4 | Retrieve aggregate sentiment analytics (% positive, neutral, negative). |
 
 ---
 
@@ -240,6 +249,256 @@ Re-runs the generation service using the draft's saved prompt settings (with opt
 
 #### Success Response (200 OK)
 Returns the updated draft with new `generatedContent`, new `hashtags`, refreshed `updatedAt`, and incremented `version` (e.g. `version: 2`).
+
+---
+
+## 8. List Scheduled Posts
+
+### `GET /api/ai/schedule`
+
+Retrieves all scheduled posts for the caller's organization, sorted chronologically by `scheduledTime` ascending.
+
+#### Query Parameters
+- `status` (string, optional): Filter by post status (`"draft"`, `"scheduled"`, `"published"`, `"failed"`).
+- `platform` (string, optional): Filter by platform (`"instagram"`, `"twitter"`, `"linkedin"`, `"facebook"`, `"general"`).
+
+#### Success Response (200 OK)
+```json
+[
+  {
+    "id": "sched_01HXYZ",
+    "orgId": "org_123",
+    "createdBy": "user_456",
+    "draftId": "draft_01HXYZ",
+    "topic": "Weekly Product Spotlight",
+    "platform": "instagram",
+    "content": "Check out our newest audio hardware release!",
+    "hashtags": ["#Tech", "#Audio"],
+    "media": [
+      {
+        "url": "https://example.com/banner.jpg",
+        "type": "image"
+      }
+    ],
+    "scheduledTime": 1792667428000,
+    "scheduledIso": "2026-10-22T10:00:00.000Z",
+    "timezone": "America/New_York",
+    "status": "scheduled",
+    "isSimulated": false,
+    "createdAt": 1729600000000,
+    "updatedAt": 1729600000000
+  }
+]
+```
+
+---
+
+## 9. Create Scheduled Post
+
+### `POST /api/ai/schedule`
+
+Schedules a new social post. Can be created standalone or linked directly to an existing C2 draft via `draftId`. When `draftId` is provided, missing content, topic, hashtags, and media are inherited from the draft, and the draft's status transitions to `"scheduled"`.
+
+#### Request Body
+```json
+{
+  "draftId": "draft_01HXYZ",
+  "topic": "Weekly Product Spotlight",
+  "platform": "instagram",
+  "content": "Check out our newest audio hardware release!",
+  "hashtags": ["#Tech", "#Audio"],
+  "media": [
+    {
+      "url": "https://example.com/banner.jpg",
+      "type": "image"
+    }
+  ],
+  "scheduledTime": 1792667428000,
+  "timezone": "America/New_York",
+  "status": "scheduled"
+}
+```
+
+#### Field Specifications
+- `draftId` (string, optional): ID of existing draft belonging to the organization.
+- `topic` (string, required if not provided by draft): 1 to 500 characters.
+- `content` (string, required if not provided by draft): 1 to 10000 characters.
+- `platform` (string, optional): One of `"instagram"`, `"twitter"`, `"linkedin"`, `"facebook"`, `"general"`. Defaults to draft platform or `"general"`.
+- `scheduledTime` (number or ISO string, required): Timestamp in milliseconds or valid ISO 8601 string.
+- `timezone` (string, optional): IANA timezone string e.g. `"UTC"`, `"America/New_York"`. Defaults to `"UTC"`.
+- `status` (string, optional): One of `"draft"`, `"scheduled"`. Defaults to `"scheduled"`.
+
+#### Success Response (201 Created)
+Returns the created scheduled post object with assigned Firestore `id`, `orgId`, `createdBy`, `isSimulated: false`, `createdAt`, and `updatedAt`.
+
+---
+
+## 10. Get Single Scheduled Post
+
+### `GET /api/ai/schedule/:id`
+
+Retrieves a single scheduled post. Returns `404` if the post does not exist or belongs to another organization.
+
+#### Success Response (200 OK)
+Returns the single scheduled post object.
+
+---
+
+## 11. Update Scheduled Post
+
+### `PUT /api/ai/schedule/:id`
+
+Updates scheduling details, content, or platform of an un-published post. If the post is already published (`status: "published"`), modifications are disallowed and rejected with `400 Bad Request`.
+
+#### Request Body (all fields optional)
+```json
+{
+  "topic": "Updated Launch Title",
+  "content": "Revised post copy for the campaign.",
+  "scheduledTime": 1792753828000,
+  "timezone": "UTC",
+  "status": "scheduled"
+}
+```
+
+#### Success Response (200 OK)
+Returns the full updated scheduled post object with refreshed `updatedAt`.
+
+---
+
+## 12. Delete Scheduled Post
+
+### `DELETE /api/ai/schedule/:id`
+
+Cancels and deletes a scheduled post from Firestore.
+
+#### Success Response (200 OK)
+```json
+{
+  "success": true
+}
+```
+
+---
+
+## 13. Publish Scheduled Post
+
+### `POST /api/ai/schedule/:id/publish`
+
+Triggers the publication of a scheduled post.
+
+#### Duplicate Publishing & Safety
+- If the post is already in `"published"` status, the request is rejected with `409 Conflict` to prevent duplicate publishing.
+- When real platform credentials (`SOCIAL_PUBLISHING_API_KEY`) are not present, the system runs a realistic publishing simulation.
+- The response and database document explicitly declare `isSimulated: true` so simulated posts are never misrepresented as real platform broadcasts.
+
+#### Success Response (200 OK)
+```json
+{
+  "post": {
+    "id": "sched_01HXYZ",
+    "orgId": "org_123",
+    "createdBy": "user_456",
+    "topic": "Weekly Product Spotlight",
+    "platform": "instagram",
+    "content": "Check out our newest audio hardware release!",
+    "status": "published",
+    "isSimulated": true,
+    "publishedAt": 1729600500000,
+    "updatedAt": 1729600500000
+  },
+  "isSimulated": true,
+  "publishedAt": 1729600500000,
+  "platformResponse": {
+    "success": true,
+    "simulated": true,
+    "message": "Post successfully published to instagram via simulated gateway",
+    "externalId": "sim_instagram_1729600500000_a1b2c3"
+  }
+}
+```
+
+---
+
+## 14. Analyze and Save Sentiment
+
+### `POST /api/ai/sentiment`
+
+Analyzes customer feedback, social comments, or reviews for sentiment classification (`"positive"`, `"neutral"`, `"negative"`), confidence scoring, and key theme extraction. Persists the record to `aiSentimentResults`.
+
+#### Request Body
+```json
+{
+  "text": "Absolutely love this new content automation tool! Saved me hours.",
+  "author": "Sarah K."
+}
+```
+
+#### Field Specifications
+- `text` (string, required): 1 to 5000 characters.
+- `author` (string, optional): 1 to 100 characters.
+
+#### Success Response (201 Created)
+```json
+{
+  "id": "senti_01HXYZ",
+  "orgId": "org_123",
+  "createdBy": "user_456",
+  "text": "Absolutely love this new content automation tool! Saved me hours.",
+  "author": "Sarah K.",
+  "sentiment": "positive",
+  "score": 0.94,
+  "keyThemes": [
+    "automation",
+    "time-saving",
+    "usability"
+  ],
+  "provider": "gemini",
+  "createdAt": 1729600000000
+}
+```
+*Note: If Google Gemini is unavailable or offline, the system seamlessly falls back to the deterministic rule-based lexicon analyzer and reports `"provider": "mock"`.*
+
+---
+
+## 15. List Sentiment Records
+
+### `GET /api/ai/sentiment`
+
+Lists all sentiment analysis records for the caller's organization, ordered by `createdAt` descending.
+
+#### Query Parameters
+- `sentiment` (string, optional): Filter by sentiment category (`"positive"`, `"neutral"`, `"negative"`).
+
+#### Success Response (200 OK)
+Returns an array of sentiment result objects.
+
+---
+
+## 16. Sentiment Summary Analytics
+
+### `GET /api/ai/sentiment/summary`
+
+Aggregates all sentiment records belonging to the caller's organization to calculate total count, positive %, neutral %, and negative %. Powers the sentiment dashboard metrics cards directly.
+
+#### Success Response (200 OK)
+```json
+{
+  "total": 142,
+  "positive": {
+    "count": 97,
+    "percentage": 68
+  },
+  "neutral": {
+    "count": 31,
+    "percentage": 22
+  },
+  "negative": {
+    "count": 14,
+    "percentage": 10
+  }
+}
+```
 
 ---
 

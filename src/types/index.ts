@@ -76,3 +76,98 @@ export interface AiContentDraftDoc {
   updatedAt: number;
 }
 
+// ---------- Task C3: Scheduling and Publishing Types ----------
+
+export type ScheduledPostStatus = "draft" | "scheduled" | "published" | "failed";
+
+export interface ScheduledPostDoc {
+  id?: string;
+  orgId: string;
+  createdBy: string;
+  draftId?: string; // Optional reference linking to an aiContentDrafts record
+  topic: string;
+  platform: Platform;
+  content: string;
+  hashtags: string[];
+  media: MediaReference[];
+  scheduledTime: number; // Canonical unix timestamp in milliseconds
+  scheduledIso?: string; // ISO 8601 string representation
+  timezone: string; // IANA timezone string e.g. "UTC"
+  status: ScheduledPostStatus;
+  isSimulated: boolean; // Explicitly true when published via simulation
+  publishedAt?: number; // Unix timestamp in ms when published
+  failureReason?: string; // Descriptive failure message if status is "failed"
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface CreateScheduledPostInput {
+  draftId?: string;
+  topic?: string;
+  platform?: Platform;
+  content?: string;
+  hashtags?: string[];
+  media?: MediaReference[];
+  scheduledTime: number; // Unix ms
+  timezone?: string;
+  status?: ScheduledPostStatus;
+}
+
+export interface UpdateScheduledPostInput {
+  topic?: string;
+  platform?: Platform;
+  content?: string;
+  hashtags?: string[];
+  media?: MediaReference[];
+  scheduledTime?: number;
+  timezone?: string;
+  status?: ScheduledPostStatus;
+}
+
+export interface PublishPostResult {
+  post: ScheduledPostDoc;
+  isSimulated: boolean;
+  publishedAt: number;
+  platformResponse: {
+    success: boolean;
+    simulated: boolean;
+    message: string;
+    externalId?: string;
+  };
+}
+
+// ---------- Task C4: Sentiment Analysis Types ----------
+
+export type SentimentType = "positive" | "neutral" | "negative";
+
+export interface SentimentResultDoc {
+  id?: string;
+  orgId: string;
+  createdBy: string;
+  text: string;
+  author?: string; // Optional reviewer or commenter name
+  sentiment: SentimentType;
+  score: number; // Confidence score between 0.00 and 1.00
+  keyThemes: string[]; // Extracted themes or aspects
+  provider: "gemini" | "mock";
+  createdAt: number;
+}
+
+export interface AnalyzeSentimentInput {
+  text: string;
+  author?: string;
+}
+
+export interface SentimentMetric {
+  count: number;
+  percentage: number;
+}
+
+export interface SentimentSummary {
+  total: number;
+  positive: SentimentMetric;
+  neutral: SentimentMetric;
+  negative: SentimentMetric;
+}
+
+
