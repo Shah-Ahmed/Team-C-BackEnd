@@ -10,6 +10,8 @@
     "seed:superadmin": "tsx --env-file=.env.local scripts/seed-super-admin.ts",
     "test:c1": "tsx tests/c1-ai-generator.test.ts",
     "test:c2": "tsx --env-file=.env.local tests/c2-drafts.test.ts",
+    "test:c3": "tsx --env-file=.env.local tests/c3-schedule.test.ts",
+    "test:c4": "tsx --env-file=.env.local tests/c4-sentiment.test.ts",
     "demo": "tsx --env-file=.env.local scripts/demo-generate.ts"
   },
 

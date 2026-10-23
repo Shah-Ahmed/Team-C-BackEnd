@@ -16,7 +16,7 @@ import type { AuthUser, Role } from "@/types";
 function corsHeaders(): Record<string, string> {
   return {
     "Access-Control-Allow-Origin": process.env.FRONTEND_ORIGIN || "http://localhost:3000",
-    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
     "Access-Control-Max-Age": "86400",
     Vary: "Origin",
