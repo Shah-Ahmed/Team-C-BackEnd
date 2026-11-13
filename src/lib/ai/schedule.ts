@@ -1,10 +1,11 @@
-// Scheduling and publishing workflow data access layer for Team C.
-// Manages the aiScheduledPosts Firestore collection with multi-tenant isolation,
-// timezone-aware scheduling, status lifecycle transitions, and simulated publishing.
+// Scheduling and publishing service layer for Team C
+// Manages scheduled posts in Firestore with live social and simulated publishing
 
 import { getAdminDb } from "@/lib/firebaseAdmin";
 import { HttpError } from "@/lib/errors";
 import { getDraftById, updateDraft } from "@/lib/ai/drafts";
+import { isInstagramConfigured, publishToInstagram } from "@/lib/ai/instagram";
+import { isFacebookConfigured, publishToFacebookPage } from "@/lib/ai/facebook";
 import type {
   CreateScheduledPostInput,
   MediaReference,
@@ -16,10 +17,10 @@ import type {
 } from "@/types";
 
 const COLLECTION_NAME = "aiScheduledPosts";
+const DEFAULT_INSTAGRAM_IMAGE =
+  "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1080&q=80";
 
-/**
- * Validates an IANA timezone identifier (e.g. "UTC", "America/New_York").
- */
+// Validate an IANA timezone identifier such as UTC or America/New_York
 export function isValidTimezone(tz: string): boolean {
   if (!tz || typeof tz !== "string") return false;
   try {
@@ -30,18 +31,19 @@ export function isValidTimezone(tz: string): boolean {
   }
 }
 
-/**
- * Strips undefined values to prevent Firestore serialization exceptions.
- */
+// Strip undefined properties before writing to Firestore
 function sanitizeDoc<T>(doc: T): T {
   return JSON.parse(JSON.stringify(doc));
 }
 
-/**
- * Creates and persists a new scheduled post for an organization.
- * If draftId is supplied, content and media are inherited from the draft,
- * and the draft's status is linked and updated to "scheduled".
- */
+// Build full Instagram caption including hashtags if present
+function buildPostCaption(content: string, hashtags: string[]): string {
+  const cleanTags = Array.isArray(hashtags) ? hashtags.filter(Boolean) : [];
+  if (cleanTags.length === 0) return content;
+  return `${content}\n\n${cleanTags.join(" ")}`;
+}
+
+// Create and persist a scheduled post, inheriting details if draftId is supplied
 export async function createScheduledPost(
   orgId: string,
   createdBy: string,
@@ -56,7 +58,6 @@ export async function createScheduledPost(
   let hashtags: string[] = Array.isArray(input.hashtags) ? input.hashtags : [];
   let media: MediaReference[] = Array.isArray(input.media) ? input.media : [];
 
-  // If created from an existing draft, verify ownership and inherit details
   if (input.draftId) {
     const draft = await getDraftById(orgId, input.draftId);
     if (!topic) topic = draft.title;
@@ -65,7 +66,6 @@ export async function createScheduledPost(
     if (hashtags.length === 0 && Array.isArray(draft.hashtags)) hashtags = draft.hashtags;
     if (media.length === 0 && Array.isArray(draft.media)) media = draft.media;
 
-    // Transition linked draft to scheduled status
     await updateDraft(orgId, input.draftId, { status: "scheduled" });
   }
 
@@ -87,7 +87,6 @@ export async function createScheduledPost(
   }
 
   const status: ScheduledPostStatus = input.status || "scheduled";
-
   const scheduledIso = new Date(input.scheduledTime).toISOString();
 
   const postData: Omit<ScheduledPostDoc, "id"> = {
@@ -113,10 +112,7 @@ export async function createScheduledPost(
   return { id: docRef.id, ...clean };
 }
 
-/**
- * Lists scheduled posts for an organization with optional status and platform filters.
- * Sorted chronologically by scheduledTime.
- */
+// List scheduled posts for an organization sorted chronologically
 export async function listScheduledPosts(
   orgId: string,
   filterStatus?: ScheduledPostStatus,
@@ -133,20 +129,16 @@ export async function listScheduledPosts(
   }
 
   const snapshot = await query.get();
-
   const posts = snapshot.docs.map((doc) => {
     const data = doc.data() as Omit<ScheduledPostDoc, "id">;
     return { id: doc.id, ...data };
   });
 
-  // Sort ascending by scheduledTime for calendar/queue display
   posts.sort((a, b) => a.scheduledTime - b.scheduledTime);
   return posts;
 }
 
-/**
- * Retrieves a single scheduled post, enforcing organization-level isolation.
- */
+// Fetch a single scheduled post while enforcing organization ownership
 export async function getScheduledPostById(
   orgId: string,
   postId: string
@@ -154,7 +146,6 @@ export async function getScheduledPostById(
   const db = getAdminDb();
   const snap = await db.collection(COLLECTION_NAME).doc(postId).get();
 
-  // Return 404 for missing or cross-org access to prevent ID enumeration
   if (!snap.exists) {
     throw new HttpError(404, "Scheduled post not found");
   }
@@ -167,10 +158,7 @@ export async function getScheduledPostById(
   return { id: snap.id, ...data };
 }
 
-/**
- * Updates scheduling details and content of an existing scheduled post.
- * If the post has already been published, modifications are disallowed.
- */
+// Update an unpublished scheduled post
 export async function updateScheduledPost(
   orgId: string,
   postId: string,
@@ -221,60 +209,106 @@ export async function updateScheduledPost(
   return { ...existing, ...cleanPatch, id: postId };
 }
 
-/**
- * Cancels and deletes a scheduled post belonging to the caller's organization.
- */
+// Delete a scheduled post belonging to the caller organization
 export async function deleteScheduledPost(orgId: string, postId: string): Promise<void> {
   await getScheduledPostById(orgId, postId);
   await getAdminDb().collection(COLLECTION_NAME).doc(postId).delete();
 }
 
-/**
- * Publishes a scheduled post.
- *
- * Prevents duplicate publishing if already in "published" status.
- * Evaluates real external publishing integration if credentials exist,
- * and executes a safe simulated publication if real platform APIs are not configured.
- * Clearly records isSimulated: true to avoid misleading reporting.
- */
+// Execute a live platform publish callback and persist success or failure in Firestore
+async function executeLivePublish(
+  postId: string,
+  existing: ScheduledPostDoc,
+  now: number,
+  publishFn: () => Promise<{ externalId: string; message: string }>
+): Promise<PublishPostResult> {
+  try {
+    const result = await publishFn();
+
+    const livePatch: Partial<ScheduledPostDoc> = {
+      status: "published",
+      isSimulated: false,
+      externalId: result.externalId,
+      publishedAt: now,
+      updatedAt: now,
+      failureReason: undefined,
+    };
+
+    const cleanLivePatch = sanitizeDoc(livePatch);
+    await getAdminDb().collection(COLLECTION_NAME).doc(postId).update(cleanLivePatch);
+
+    const updatedPost: ScheduledPostDoc = {
+      ...existing,
+      ...cleanLivePatch,
+      id: postId,
+    };
+
+    return {
+      post: updatedPost,
+      isSimulated: false,
+      publishedAt: now,
+      platformResponse: {
+        success: true,
+        simulated: false,
+        message: result.message,
+        externalId: result.externalId,
+      },
+    };
+  } catch (err) {
+    const reason = (err as Error).message || "Social publishing failed";
+    const failPatch = sanitizeDoc({
+      status: "failed" as ScheduledPostStatus,
+      failureReason: reason,
+      updatedAt: now,
+    });
+    await getAdminDb().collection(COLLECTION_NAME).doc(postId).update(failPatch);
+
+    throw err instanceof HttpError ? err : new HttpError(502, reason);
+  }
+}
+
+// Publish a post to live Instagram or Facebook when configured, or fall back to simulation
 export async function publishScheduledPost(
   orgId: string,
   postId: string
 ): Promise<PublishPostResult> {
   const existing = await getScheduledPostById(orgId, postId);
 
-  // Prevent duplicate publishing
   if (existing.status === "published") {
     throw new HttpError(409, "Post has already been published and cannot be republished");
   }
 
   const now = Date.now();
+  const caption = buildPostCaption(existing.content, existing.hashtags);
 
-  // Check if real platform credentials exist (e.g. Meta Graph, Twitter API)
-  const hasRealPlatformCredentials = Boolean(
-    process.env.ENABLE_REAL_PUBLISHING === "true" &&
-    process.env.SOCIAL_PUBLISHING_API_KEY
-  );
-
-  if (hasRealPlatformCredentials) {
-    // Real publishing integration branch: Only used if valid credentials exist.
-    // In this collaborative internship repo, real platform credentials are not provided.
-    throw new HttpError(501, "Real external social platform publishing credentials are not configured");
+  if (existing.platform === "instagram" && isInstagramConfigured()) {
+    const imageUrl = existing.media?.[0]?.url || DEFAULT_INSTAGRAM_IMAGE;
+    return executeLivePublish(postId, existing, now, () =>
+      publishToInstagram({ caption, imageUrl })
+    );
   }
 
-  // Simulated publishing engine:
-  // Clearly distinguish simulation from real external publishing.
+  if (existing.platform === "facebook" && isFacebookConfigured()) {
+    const imageUrl = existing.media?.[0]?.url;
+    return executeLivePublish(postId, existing, now, () =>
+      publishToFacebookPage({ message: caption, imageUrl })
+    );
+  }
+
+  // Simulated publishing fallback when live credentials are not configured
   const isSimulated = true;
+  const externalId = `sim_${existing.platform}_${now}_${Math.random().toString(36).substring(2, 8)}`;
   const platformResponse = {
     success: true,
     simulated: true,
     message: `Post successfully published to ${existing.platform} via simulated gateway`,
-    externalId: `sim_${existing.platform}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
+    externalId,
   };
 
   const patch: Partial<ScheduledPostDoc> = {
     status: "published",
     isSimulated,
+    externalId,
     publishedAt: now,
     updatedAt: now,
     failureReason: undefined,
@@ -294,5 +328,38 @@ export async function publishScheduledPost(
     isSimulated,
     publishedAt: now,
     platformResponse,
+  };
+}
+
+// Check for scheduled posts whose scheduledTime has arrived and publish them
+export async function processDueScheduledPosts(orgId: string): Promise<{
+  processedCount: number;
+  publishedIds: string[];
+  failed: Array<{ id: string; error: string }>;
+}> {
+  const scheduledPosts = await listScheduledPosts(orgId, "scheduled");
+  const now = Date.now();
+  const duePosts = scheduledPosts.filter((post) => post.id && post.scheduledTime <= now);
+
+  const publishedIds: string[] = [];
+  const failed: Array<{ id: string; error: string }> = [];
+
+  for (const post of duePosts) {
+    if (!post.id) continue;
+    try {
+      await publishScheduledPost(orgId, post.id);
+      publishedIds.push(post.id);
+    } catch (err) {
+      failed.push({
+        id: post.id,
+        error: (err as Error).message || "Failed to publish scheduled post",
+      });
+    }
+  }
+
+  return {
+    processedCount: duePosts.length,
+    publishedIds,
+    failed,
   };
 }

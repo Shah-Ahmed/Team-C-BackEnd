@@ -1,11 +1,10 @@
-// Sentiment analysis service layer for Team C.
-// Analyzes social media text and reviews, classifying into positive, neutral, or negative.
-// Uses Google Gemini when configured with automatic failover, and provides a deterministic
-// lexicon-based fallback when offline or without credentials.
-// Persists results in the aiSentimentResults collection with organization isolation.
+// Sentiment analysis service layer for Team C
+// Classifies reviews and social comments into positive, neutral, or negative
 
 import { getAdminDb } from "@/lib/firebaseAdmin";
 import { HttpError } from "@/lib/errors";
+import { fetchRecentInstagramComments, isInstagramConfigured } from "@/lib/ai/instagram";
+import { fetchRecentFacebookComments, isFacebookConfigured } from "@/lib/ai/facebook";
 import type {
   AnalyzeSentimentInput,
   SentimentResultDoc,
@@ -34,7 +33,7 @@ const NEGATIVE_WORDS = new Set([
   "bugs", "error", "errors", "slow", "hate", "hated", "poor", "bad", "worst",
   "disappointed", "disappointing", "missing", "waste", "useless", "crash",
   "crashes", "stuck", "horrible", "unacceptable", "annoying", "frustrating",
-  "difficult", "garbage", "trash", "broken", "glitch", "flawed"
+  "difficult", "garbage", "trash", "glitch", "flawed"
 ]);
 
 const STOPWORDS = new Set([
@@ -45,9 +44,7 @@ const STOPWORDS = new Set([
   "too", "just", "now", "then", "more", "some", "any", "all"
 ]);
 
-/**
- * Extracts key topic themes from text by finding non-stopword tokens.
- */
+// Extract up to four frequent non-stopword tokens as fallback themes
 function extractFallbackThemes(text: string): string[] {
   const words = text
     .toLowerCase()
@@ -60,17 +57,13 @@ function extractFallbackThemes(text: string): string[] {
     frequencies.set(word, (frequencies.get(word) || 0) + 1);
   }
 
-  const sorted = Array.from(frequencies.entries())
+  return Array.from(frequencies.entries())
     .sort((a, b) => b[1] - a[1])
-    .map(([word]) => word);
-
-  return sorted.slice(0, 4);
+    .map(([word]) => word)
+    .slice(0, 4);
 }
 
-/**
- * Deterministic lexicon-based sentiment analyzer.
- * Returns sentiment classification, score, and key themes without external network dependencies.
- */
+// Offline lexicon-based sentiment classifier with basic negation handling
 function analyzeSentimentMock(text: string): {
   sentiment: SentimentType;
   score: number;
@@ -91,17 +84,11 @@ function analyzeSentimentMock(text: string): {
     const isNegated = ["not", "no", "never", "hardly", "barely"].includes(prev);
 
     if (POSITIVE_WORDS.has(token)) {
-      if (isNegated) {
-        negCount += 1.5;
-      } else {
-        posCount += 1;
-      }
+      if (isNegated) negCount += 1.5;
+      else posCount += 1;
     } else if (NEGATIVE_WORDS.has(token)) {
-      if (isNegated) {
-        posCount += 1;
-      } else {
-        negCount += 1.5;
-      }
+      if (isNegated) posCount += 1;
+      else negCount += 1.5;
     }
   }
 
@@ -143,9 +130,7 @@ function analyzeSentimentMock(text: string): {
   };
 }
 
-/**
- * Calls live Google Gemini models to perform sentiment classification and key theme extraction.
- */
+// Call Gemini API across candidate models to classify sentiment and extract themes
 async function callGeminiSentiment(
   text: string,
   apiKey: string
@@ -213,13 +198,15 @@ STRICT CONSTRAINTS:
       };
 
       const rawSentiment = parsed.sentiment?.toLowerCase();
-      const sentiment: SentimentType = (rawSentiment === "positive" || rawSentiment === "negative" || rawSentiment === "neutral")
-        ? rawSentiment
-        : "neutral";
+      const sentiment: SentimentType =
+        rawSentiment === "positive" || rawSentiment === "negative" || rawSentiment === "neutral"
+          ? rawSentiment
+          : "neutral";
 
-      const score = typeof parsed.score === "number" && !isNaN(parsed.score)
-        ? Math.min(1.0, Math.max(0.0, Number(parsed.score.toFixed(2))))
-        : 0.75;
+      const score =
+        typeof parsed.score === "number" && !isNaN(parsed.score)
+          ? Math.min(1.0, Math.max(0.0, Number(parsed.score.toFixed(2))))
+          : 0.75;
 
       const keyThemes = Array.isArray(parsed.keyThemes)
         ? parsed.keyThemes.filter((t) => typeof t === "string" && t.trim().length > 0).map((t) => t.trim())
@@ -234,11 +221,7 @@ STRICT CONSTRAINTS:
   throw lastError || new Error("All Gemini candidate models failed to analyze sentiment");
 }
 
-/**
- * Analyzes the sentiment of a text string.
- * Uses Google Gemini when GEMINI_API_KEY is available, or cleanly falls back
- * to a deterministic mock lexicon analyzer.
- */
+// Analyze text sentiment via Gemini with automatic offline fallback
 export async function analyzeSentiment(text: string): Promise<{
   sentiment: SentimentType;
   score: number;
@@ -266,9 +249,7 @@ export async function analyzeSentiment(text: string): Promise<{
   };
 }
 
-/**
- * Validates text input, analyzes sentiment, and persists the result in Firestore.
- */
+// Validate text, run sentiment analysis, and persist the record in Firestore
 export async function saveSentimentResult(
   orgId: string,
   createdBy: string,
@@ -284,7 +265,6 @@ export async function saveSentimentResult(
   }
 
   const author = input.author?.trim() || undefined;
-
   const analysis = await analyzeSentiment(text);
   const now = Date.now();
 
@@ -293,6 +273,9 @@ export async function saveSentimentResult(
     createdBy,
     text,
     ...(author ? { author } : {}),
+    ...(input.externalCommentId ? { externalCommentId: input.externalCommentId } : {}),
+    ...(input.mediaId ? { mediaId: input.mediaId } : {}),
+    source: input.source || "manual",
     sentiment: analysis.sentiment,
     score: analysis.score,
     keyThemes: analysis.keyThemes,
@@ -306,9 +289,7 @@ export async function saveSentimentResult(
   return { id: docRef.id, ...clean };
 }
 
-/**
- * Lists sentiment analysis records for an organization, ordered by newest first.
- */
+// List saved sentiment results for an organization sorted newest first
 export async function listSentimentResults(
   orgId: string,
   filterSentiment?: SentimentType
@@ -321,7 +302,6 @@ export async function listSentimentResults(
   }
 
   const snapshot = await query.get();
-
   const results = snapshot.docs.map((doc) => {
     const data = doc.data() as Omit<SentimentResultDoc, "id">;
     return { id: doc.id, ...data };
@@ -331,11 +311,78 @@ export async function listSentimentResults(
   return results;
 }
 
-/**
- * Aggregates sentiment metrics for the organization.
- * Calculates total count, positive count/percentage, neutral count/percentage,
- * and negative count/percentage for the sentiment analytics cards.
- */
+// Sync new Facebook and Instagram comments and analyze sentiment without duplicates
+export async function syncInstagramComments(
+  orgId: string,
+  uid: string
+): Promise<{
+  syncedCount: number;
+  totalFetched: number;
+  newRecords: SentimentResultDoc[];
+}> {
+  const fbReady = isFacebookConfigured();
+  const igReady = isInstagramConfigured();
+
+  if (!fbReady && !igReady) {
+    throw new HttpError(
+      400,
+      "Social credentials are not configured in backend .env.local. Set FACEBOOK_PAGE_ACCESS_TOKEN or INSTAGRAM_ACCESS_TOKEN."
+    );
+  }
+
+  const incoming: Array<{
+    externalId: string;
+    mediaId: string;
+    text: string;
+    author: string;
+    source: "facebook" | "instagram";
+  }> = [];
+
+  if (fbReady) {
+    const fbComments = await fetchRecentFacebookComments();
+    for (const c of fbComments) {
+      incoming.push({ ...c, source: "facebook" });
+    }
+  }
+
+  if (igReady) {
+    const igComments = await fetchRecentInstagramComments();
+    for (const c of igComments) {
+      const handle = c.author.startsWith("@") ? c.author : `@${c.author}`;
+      incoming.push({ ...c, author: handle, source: "instagram" });
+    }
+  }
+
+  const existingRecords = await listSentimentResults(orgId);
+  const existingIds = new Set(
+    existingRecords.map((item) => item.externalCommentId).filter(Boolean)
+  );
+
+  const newRecords: SentimentResultDoc[] = [];
+
+  for (const comment of incoming) {
+    if (existingIds.has(comment.externalId)) continue;
+
+    const saved = await saveSentimentResult(orgId, uid, {
+      text: comment.text,
+      author: comment.author,
+      externalCommentId: comment.externalId,
+      mediaId: comment.mediaId,
+      source: comment.source,
+    });
+
+    newRecords.push(saved);
+    existingIds.add(comment.externalId);
+  }
+
+  return {
+    syncedCount: newRecords.length,
+    totalFetched: incoming.length,
+    newRecords,
+  };
+}
+
+// Compute positive, neutral, and negative summary metrics for an organization
 export async function getSentimentSummary(orgId: string): Promise<SentimentSummary> {
   const allResults = await listSentimentResults(orgId);
   const total = allResults.length;

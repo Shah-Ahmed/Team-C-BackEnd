@@ -76,7 +76,7 @@ export interface AiContentDraftDoc {
   updatedAt: number;
 }
 
-// ---------- Task C3: Scheduling and Publishing Types ----------
+// Task C3 scheduling and publishing types
 
 export type ScheduledPostStatus = "draft" | "scheduled" | "published" | "failed";
 
@@ -84,19 +84,20 @@ export interface ScheduledPostDoc {
   id?: string;
   orgId: string;
   createdBy: string;
-  draftId?: string; // Optional reference linking to an aiContentDrafts record
+  draftId?: string;
   topic: string;
   platform: Platform;
   content: string;
   hashtags: string[];
   media: MediaReference[];
-  scheduledTime: number; // Canonical unix timestamp in milliseconds
-  scheduledIso?: string; // ISO 8601 string representation
-  timezone: string; // IANA timezone string e.g. "UTC"
+  scheduledTime: number;
+  scheduledIso?: string;
+  timezone: string;
   status: ScheduledPostStatus;
-  isSimulated: boolean; // Explicitly true when published via simulation
-  publishedAt?: number; // Unix timestamp in ms when published
-  failureReason?: string; // Descriptive failure message if status is "failed"
+  isSimulated: boolean;
+  externalId?: string;
+  publishedAt?: number;
+  failureReason?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -108,7 +109,7 @@ export interface CreateScheduledPostInput {
   content?: string;
   hashtags?: string[];
   media?: MediaReference[];
-  scheduledTime: number; // Unix ms
+  scheduledTime: number;
   timezone?: string;
   status?: ScheduledPostStatus;
 }
@@ -136,7 +137,7 @@ export interface PublishPostResult {
   };
 }
 
-// ---------- Task C4: Sentiment Analysis Types ----------
+// Task C4 sentiment analysis types
 
 export type SentimentType = "positive" | "neutral" | "negative";
 
@@ -145,10 +146,13 @@ export interface SentimentResultDoc {
   orgId: string;
   createdBy: string;
   text: string;
-  author?: string; // Optional reviewer or commenter name
+  author?: string;
+  externalCommentId?: string;
+  mediaId?: string;
+  source?: "manual" | "instagram" | "facebook";
   sentiment: SentimentType;
-  score: number; // Confidence score between 0.00 and 1.00
-  keyThemes: string[]; // Extracted themes or aspects
+  score: number;
+  keyThemes: string[];
   provider: "gemini" | "mock";
   createdAt: number;
 }
@@ -156,6 +160,9 @@ export interface SentimentResultDoc {
 export interface AnalyzeSentimentInput {
   text: string;
   author?: string;
+  externalCommentId?: string;
+  mediaId?: string;
+  source?: "manual" | "instagram" | "facebook";
 }
 
 export interface SentimentMetric {
